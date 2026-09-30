@@ -247,6 +247,25 @@ class TestBodyCeilingAppliesBeforeExtensionMiddleware:
             },
         }
 
+    @pytest.mark.parametrize("suffix", ["invoke", "invoke-with-response-stream"])
+    def test_anthropic_dialect_payload_on_bedrock_invoke_path(self, monkeypatch, suffix):
+        monkeypatch.setattr(proxy_helpers, "MAX_REQUEST_BODY_SIZE", 1024)
+        app = _make_app(monkeypatch, _install_buffering, proxy_token=TOKEN)
+        with TestClient(app, base_url="http://testserver", client=NONLOOPBACK) as c:
+            resp = c.post(
+                f"/model/anthropic.claude-3-5-sonnet-20241022-v2:0/{suffix}",
+                content=b"x" * 4096,
+                headers={"Authorization": f"Bearer {TOKEN}", "content-type": "application/json"},
+            )
+        assert resp.status_code == 413
+        assert resp.json() == {
+            "type": "error",
+            "error": {
+                "type": "request_too_large",
+                "message": "Request body too large. Maximum size is 0MB",
+            },
+        }
+
     def test_body_within_ceiling_reaches_extension_intact(self, monkeypatch):
         monkeypatch.setattr(proxy_helpers, "MAX_REQUEST_BODY_SIZE", 1024)
         app = _make_app(monkeypatch, _install_buffering, proxy_token=TOKEN)

@@ -44,9 +44,10 @@ Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
 Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 
-# Paths whose clients speak the Anthropic error dialect. Everything else gets
+# Paths whose clients speak the Anthropic error dialect (the Messages API and
+# Bedrock's /model/{id}/invoke[-with-response-stream]). Everything else gets
 # the OpenAI-style payload, which is what the handlers' own 413s use.
-_ANTHROPIC_PATH_MARKERS = ("/v1/messages",)
+_ANTHROPIC_PATH_MARKERS = ("/v1/messages", "/model/")
 
 
 def _too_large_payload(path: str, limit: int) -> bytes:
