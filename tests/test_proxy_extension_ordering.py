@@ -247,13 +247,14 @@ class TestBodyCeilingAppliesBeforeExtensionMiddleware:
             },
         }
 
+    @pytest.mark.parametrize("prefix", ["", "/bedrock"])
     @pytest.mark.parametrize("suffix", ["invoke", "invoke-with-response-stream"])
-    def test_anthropic_dialect_payload_on_bedrock_invoke_path(self, monkeypatch, suffix):
+    def test_anthropic_dialect_payload_on_bedrock_invoke_path(self, monkeypatch, suffix, prefix):
         monkeypatch.setattr(proxy_helpers, "MAX_REQUEST_BODY_SIZE", 1024)
         app = _make_app(monkeypatch, _install_buffering, proxy_token=TOKEN)
         with TestClient(app, base_url="http://testserver", client=NONLOOPBACK) as c:
             resp = c.post(
-                f"/model/anthropic.claude-3-5-sonnet-20241022-v2:0/{suffix}",
+                f"{prefix}/model/anthropic.claude-3-5-sonnet-20241022-v2:0/{suffix}",
                 content=b"x" * 4096,
                 headers={"Authorization": f"Bearer {TOKEN}", "content-type": "application/json"},
             )
@@ -264,6 +265,27 @@ class TestBodyCeilingAppliesBeforeExtensionMiddleware:
                 "type": "request_too_large",
                 "message": "Request body too large. Maximum size is 0MB",
             },
+        }
+
+    @pytest.mark.parametrize(
+        "path", ["/custom/model/status", "/model/x/other", "/model/x/invoke/extra", "/model/invoke"]
+    )
+    def test_openai_dialect_payload_on_non_bedrock_model_path(self, monkeypatch, path):
+        monkeypatch.setattr(proxy_helpers, "MAX_REQUEST_BODY_SIZE", 1024)
+        app = _make_app(monkeypatch, _install_buffering, proxy_token=TOKEN)
+        with TestClient(app, base_url="http://testserver", client=NONLOOPBACK) as c:
+            resp = c.post(
+                path,
+                content=b"x" * 4096,
+                headers={"Authorization": f"Bearer {TOKEN}", "content-type": "application/json"},
+            )
+        assert resp.status_code == 413
+        assert resp.json() == {
+            "error": {
+                "message": "Request body too large. Maximum size is 0MB",
+                "type": "invalid_request_error",
+                "code": "request_too_large",
+            }
         }
 
     def test_body_within_ceiling_reaches_extension_intact(self, monkeypatch):

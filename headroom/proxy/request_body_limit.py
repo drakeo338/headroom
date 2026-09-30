@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 
@@ -47,13 +48,16 @@ Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 # Paths whose clients speak the Anthropic error dialect (the Messages API and
 # Bedrock's /model/{id}/invoke[-with-response-stream]). Everything else gets
 # the OpenAI-style payload, which is what the handlers' own 413s use.
-_ANTHROPIC_PATH_MARKERS = ("/v1/messages", "/model/")
+_ANTHROPIC_MESSAGES_MARKER = "/v1/messages"
+# Only the terminal Bedrock route shape counts (any path prefix is allowed):
+# /model/{model_id:path}/invoke and /model/{model_id:path}/invoke-with-response-stream.
+_BEDROCK_INVOKE_PATH = re.compile(r"/model/.+/(?:invoke|invoke-with-response-stream)$")
 
 
 def _too_large_payload(path: str, limit: int) -> bytes:
     """Mirror the handlers' own 413 payloads so clients see one shape per dialect."""
     message = f"Request body too large. Maximum size is {limit // (1024 * 1024)}MB"
-    if any(marker in path for marker in _ANTHROPIC_PATH_MARKERS):
+    if _ANTHROPIC_MESSAGES_MARKER in path or _BEDROCK_INVOKE_PATH.search(path):
         payload: dict[str, Any] = {
             "type": "error",
             "error": {"type": "request_too_large", "message": message},
