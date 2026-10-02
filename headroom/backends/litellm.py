@@ -581,12 +581,17 @@ _OPENAI_ERROR_TYPES = {
 def _upstream_client_error(exc: Exception, error_types: dict[int, str]) -> tuple[int, str] | None:
     """Map a LiteLLM exception's own 4xx ``status_code`` to ``(status, error type)``.
 
-    Returns None when the exception carries no 4xx status or the status has no
-    entry in ``error_types``, so the caller falls back to matching on the message.
+    A 4xx status outside ``error_types`` keeps its status with the generic
+    ``invalid_request_error`` type. Returns None when the exception carries no
+    4xx status, so the caller falls back to matching on the message.
     """
     status = getattr(exc, "status_code", None)
-    if isinstance(status, int) and not isinstance(status, bool) and status in error_types:
+    if not isinstance(status, int) or isinstance(status, bool):
+        return None
+    if status in error_types:
         return status, error_types[status]
+    if 400 <= status <= 499:
+        return status, "invalid_request_error"
     return None
 
 

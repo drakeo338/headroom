@@ -232,6 +232,12 @@ def _upstream_error(status_code: int, message: str) -> Exception:
         429: litellm.RateLimitError,
         500: litellm.InternalServerError,
     }
+    if status_code not in classes:
+        # Unmapped 4xx: litellm bakes the status into each class, so use a bare
+        # exception carrying only the ``status_code`` attribute.
+        err = Exception(message)
+        err.status_code = status_code  # type: ignore[attr-defined]
+        return err
     response = httpx.Response(status_code, request=httpx.Request("POST", "https://upstream.test"))
     return classes[status_code](
         message=message, model="bedrock/claude", llm_provider="bedrock", response=response
@@ -253,6 +259,9 @@ _BAD_THINKING = (
         (401, "authentication_error"),
         (404, "not_found_error"),
         (429, "rate_limit_error"),
+        (402, "invalid_request_error"),
+        (408, "invalid_request_error"),
+        (409, "invalid_request_error"),
         (500, "api_error"),
     ],
 )
@@ -282,6 +291,9 @@ async def test_send_message_keeps_upstream_litellm_status(status: int, error_typ
         (401, "invalid_api_key"),
         (404, "model_not_found"),
         (429, "rate_limit_exceeded"),
+        (402, "invalid_request_error"),
+        (408, "invalid_request_error"),
+        (409, "invalid_request_error"),
         (500, "api_error"),
     ],
 )
