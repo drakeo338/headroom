@@ -1,0 +1,82 @@
+name: image-evidence
+on:
+  push:
+    branches: [claude/4445-image-evidence]
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TARGETS: runtime runtime-code runtime-slim runtime-code-slim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: versions
+        run: |
+          echo "=== versions ==="
+          echo "commit: $GITHUB_SHA"
+          echo "PR code commit (parent): $(git rev-parse HEAD~1 2>/dev/null || echo n/a)"
+          docker --version
+          docker buildx version
+      - name: bake plan
+        continue-on-error: true
+        run: |
+          echo "=== docker buildx bake -f docker-bake.hcl --print $TARGETS ==="
+          docker buildx bake -f docker-bake.hcl --print $TARGETS
+          echo "=== resolved: target -> stage, RUNTIME_USER, RUNTIME_HOME ==="
+          docker buildx bake -f docker-bake.hcl --print $TARGETS 2>/dev/null \
+            | jq -r '.target | to_entries[] | "\(.key): stage=\(.value.target) RUNTIME_USER=\(.value.args.RUNTIME_USER) RUNTIME_HOME=\(.value.args.RUNTIME_HOME) HEADROOM_EXTRAS=\(.value.args.HEADROOM_EXTRAS)"'
+      - name: build
+        continue-on-error: true
+        run: |
+          echo "=== docker buildx bake -f docker-bake.hcl --load (linux/amd64) $TARGETS ==="
+          start=$(date +%s)
+          docker buildx bake -f docker-bake.hcl \
+            --set '*.platform=linux/amd64' \
+            --set 'runtime.tags=hr-evidence:runtime' \
+            --set 'runtime-code.tags=hr-evidence:runtime-code' \
+            --set 'runtime-slim.tags=hr-evidence:runtime-slim' \
+            --set 'runtime-code-slim.tags=hr-evidence:runtime-code-slim' \
+            --load --progress=plain $TARGETS 2>&1 | tail -n 40
+          echo "build seconds: $(( $(date +%s) - start ))"
+          docker image ls hr-evidence
+      - name: inspect
+        continue-on-error: true
+        run: |
+          for t in $TARGETS; do
+            echo "=== docker inspect hr-evidence:$t ==="
+            docker inspect --format 'User={{json .Config.User}} WorkingDir={{json .Config.WorkingDir}} Volumes={{json .Config.Volumes}} Entrypoint={{json .Config.Entrypoint}}' hr-evidence:$t
+            docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' hr-evidence:$t | grep -E '^(HOME|RUNTIME_HOME)=' || echo "(no HOME/RUNTIME_HOME in Config.Env)"
+          done
+      - name: persistence probe
+        continue-on-error: true
+        run: |
+          home=/root
+          for t in $TARGETS; do
+            img=hr-evidence:$t
+            echo "=== persistence probe $t (named volume hr_$t at $home/.headroom) ==="
+            docker volume rm -f hr_$t >/dev/null 2>&1 || true
+            # distroless slim images have no shell; python3 exists in every stage
+            docker run --rm --entrypoint python3 -v hr_$t:$home/.headroom $img -c "
+          import os, pwd
+          p='$home/.headroom/probe'
+          open(p,'w').write('probe-$t\n')
+          print('writer: uid', os.getuid(), 'user', pwd.getpwuid(os.getuid()).pw_name, 'cwd', os.getcwd(), 'wrote', p)
+          print('writer HOME env:', os.environ.get('HOME'), ' expanduser(~):', os.path.expanduser('~'))
+          "
+            docker run --rm --entrypoint python3 -v hr_$t:$home/.headroom $img -c "
+          print('reader (new container) read:', open('$home/.headroom/probe').read().strip())
+          "
+            echo "--- anonymous volume from the image's own VOLUME (no -v) ---"
+            cid=$(docker create $img)
+            docker inspect --format '{{range .Mounts}}type={{.Type}} destination={{.Destination}}{{println}}{{end}}' $cid
+            docker rm -f $cid >/dev/null
+            echo "--- headroom state dir as the image resolves it ---"
+            docker run --rm --entrypoint python3 $img -c "
+          import os
+          d=os.path.expanduser('~/.headroom')
+          print('~/.headroom ->', d, 'exists', os.path.isdir(d), 'writable', os.access(d, os.W_OK))
+          "
+          done
