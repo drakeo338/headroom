@@ -506,7 +506,11 @@ def register_provider_routes(app: FastAPI, proxy: Any) -> None:
             if not await is_safe_upstream_url_async(custom_base):
                 logger.warning("rejecting unsafe x-headroom-base-url: %r", custom_base)
                 raise HTTPException(status_code=400, detail="Rejected unsafe upstream base URL")
-            return "openai", custom_base.rstrip("/")
+            # Only the destination is overridden: keep the provider the request's
+            # auth selects, so Anthropic-auth requests still get model-id
+            # sanitization in handle_passthrough.
+            provider_name = proxy.provider_runtime.model_metadata_provider(dict(request.headers))
+            return provider_name, custom_base.rstrip("/")
         headers = dict(request.headers)
         provider_name = proxy.provider_runtime.model_metadata_provider(headers)
         base_url = (
